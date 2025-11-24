@@ -251,38 +251,44 @@ export default function AdminCitasPage() {
     return new Date(year, month - 1, day);
   };
 
-  // Efecto para finalizar citas vencidas automáticamente
+  // Efecto para expirar citas vencidas automáticamente
+  // IMPORTANTE: Primero ejecuta supabase-expire-appointments-function.sql en Supabase
   useEffect(() => {
     if (!appointments || appointments.length === 0) return;
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    appointments.forEach(async (appointment: any) => {
-      if (appointment.status === 'completada' || 
-          appointment.status === 'cancelada' || 
-          appointment.status === 'expirada') {
-        return;
-      }
-
-      const appointmentDate = parseLocalDate(appointment.date);
-      appointmentDate.setHours(0, 0, 0, 0);
-
-      if (appointmentDate < today) {
-        const { error } = await supabase
-          .from('appointments')
-          .update({
-            status: 'expirada'
-          })
-          .eq('id', appointment.id);
-
-        if (error) {
-          console.error(`Error marking appointment ${appointment.id} as expired:`, error);
-        } else {
-          console.log(`Cita ${appointment.id} marcada como expirada (fecha: ${appointment.date})`);
+    const expireOldAppointments = async () => {
+      // Verificar si hay citas que necesiten expirar
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const hasExpiredAppointments = appointments.some((apt: any) => {
+        if (apt.status === 'completada' || apt.status === 'cancelada' || apt.status === 'expirada') {
+          return false;
         }
+        const aptDate = new Date(apt.date);
+        aptDate.setHours(0, 0, 0, 0);
+        return aptDate < today;
+      });
+
+      if (!hasExpiredAppointments) return;
+
+      try {
+        // Llamar a la función RPC de base de datos (bypasa RLS)
+        const { data, error } = await supabase.rpc('expire_old_appointments');
+        
+        if (error) {
+          console.error('Error detallado al expirar citas:', error);
+        } else if (data !== null && data > 0) {
+          console.log(`✅ ${data} cita(s) marcada(s) como expirada(s)`);
+          // Recargar las citas después de expirarlas
+          window.location.reload();
+        }
+      } catch (err) {
+        console.error('Excepción al llamar expire_old_appointments:', err);
       }
-    });
+    };
+
+    expireOldAppointments();
   }, [appointments, supabase]);
 
   const handleCreateAppointment = async () => {

@@ -99,7 +99,14 @@ export default function FormulasPage() {
   useEffect(() => {
     const fetchFormulas = async () => {
       try {
-        const { data, error } = await supabase.from('formulas').select('*');
+        const { data, error } = await supabase
+          .from('formulas')
+          .select(`
+            *,
+            patient:users!formulas_patient_id_fkey(id, display_name, photo_url, email),
+            doctor:users!formulas_doctor_id_fkey(id, display_name, photo_url, email)
+          `)
+          .order('date', { ascending: false });
         if (error) throw error;
         setFormulas(data || []);
       } catch (error) {
@@ -111,33 +118,47 @@ export default function FormulasPage() {
     fetchFormulas();
   }, [supabase]);
 
-  // Auto-expirar fórmulas vencidas
+  // Auto-expirar fórmulas vencidas (solo una vez al cargar)
   useEffect(() => {
-    if (!formulas || formulas.length === 0) return;
+    if (!formulas || formulas.length === 0 || !supabase) return;
 
     const checkExpiredFormulas = async () => {
       const today = new Date().toISOString().split('T')[0];
+      const expiredIds: string[] = [];
       
       for (const formula of formulas) {
         if (formula.status === 'activa' && formula.expiration_date && formula.expiration_date < today) {
-          try {
-            const { error } = await supabase
-              .from('formulas')
-              .update({
-                status: 'vencida',
-                expired_at: new Date().toISOString(),
-              })
-              .eq('id', formula.id);
-            if (error) throw error;
-          } catch (error) {
-            console.error('Error al actualizar fórmula vencida:', error);
-          }
+          expiredIds.push(formula.id);
         }
+      }
+
+      if (expiredIds.length === 0) return;
+
+      try {
+        const { error } = await supabase
+          .from('formulas')
+          .update({
+            status: 'expirada',
+            updated_at: new Date().toISOString(),
+          })
+          .in('id', expiredIds);
+        
+        if (error) throw error;
+
+        // Actualizar el estado local sin recargar desde BD
+        setFormulas(prev => prev.map(f => 
+          expiredIds.includes(f.id) 
+            ? { ...f, status: 'expirada', updated_at: new Date().toISOString() }
+            : f
+        ));
+      } catch (error) {
+        console.error('Error al actualizar fórmulas expiradas:', error);
       }
     };
 
     checkExpiredFormulas();
-  }, [formulas, supabase]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoadingFormulas]);
 
   const getStatusVariant = (
     status: string
@@ -146,11 +167,12 @@ export default function FormulasPage() {
       case 'activa':
         return 'default';
       case 'vencida':
-        return 'secondary';
+      case 'expirada':
+        return 'outline';
       case 'anulada':
         return 'destructive';
       default:
-        return 'outline';
+        return 'secondary';
     }
   };
 

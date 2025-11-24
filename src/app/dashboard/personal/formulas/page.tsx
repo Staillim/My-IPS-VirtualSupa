@@ -65,6 +65,7 @@ const getStatusVariant = (status: string) => {
     case 'activa':
       return 'default';
     case 'vencida':
+    case 'expirada':
       return 'outline';
     case 'anulada':
       return 'destructive';
@@ -184,10 +185,11 @@ export default function PersonalFormulasPage() {
 
   // Auto-expirar fórmulas vencidas
   useEffect(() => {
-    if (!formulas || !supabase) return;
+    if (!formulas || formulas.length === 0 || !supabase || !user?.id) return;
 
     const checkExpiredFormulas = async () => {
       const today = new Date().toISOString().split('T')[0];
+      let updated = false;
       
       for (const formula of formulas) {
         if (formula.status === 'activa' && formula.expiration_date && formula.expiration_date < today) {
@@ -195,19 +197,33 @@ export default function PersonalFormulasPage() {
             await supabase
               .from('formulas')
               .update({
-                status: 'vencida',
-                expired_at: new Date().toISOString(),
+                status: 'expirada',
+                updated_at: new Date().toISOString(),
               })
               .eq('id', formula.id);
+            updated = true;
           } catch (error) {
-            console.error('Error al actualizar fórmula vencida:', error);
+            console.error('Error al actualizar fórmula expirada:', error);
           }
+        }
+      }
+
+      // Si se actualizó alguna fórmula, recargar la lista
+      if (updated) {
+        const { data, error } = await supabase
+          .from('formulas')
+          .select('*')
+          .eq('doctor_id', user.id)
+          .order('date', { ascending: false });
+        
+        if (!error && data) {
+          setFormulas(data);
         }
       }
     };
 
     checkExpiredFormulas();
-  }, [formulas, supabase]);
+  }, [formulas, supabase, user?.id]);
 
   const handleAddMedication = () => {
     if (newFormula.medicationName && newFormula.dosage) {
@@ -1034,6 +1050,7 @@ export default function PersonalFormulasPage() {
                 <TableRow>
                   <TableHead>Paciente</TableHead>
                   <TableHead>Fecha Emisión</TableHead>
+                  <TableHead>Fecha Expiración</TableHead>
                   <TableHead>Medicamentos</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>
@@ -1043,6 +1060,7 @@ export default function PersonalFormulasPage() {
                 {isLoadingFormulas && [...Array(3)].map((_, i) => (
                     <TableRow key={i}>
                         <TableCell><Skeleton className="h-5 w-32" /></TableCell>
+                        <TableCell><Skeleton className="h-5 w-24" /></TableCell>
                         <TableCell><Skeleton className="h-5 w-24" /></TableCell>
                         <TableCell><Skeleton className="h-5 w-40" /></TableCell>
                         <TableCell><Skeleton className="h-6 w-20 rounded-full" /></TableCell>
@@ -1054,7 +1072,16 @@ export default function PersonalFormulasPage() {
                     <TableCell className="font-medium">
                       {formula.patient_name}
                     </TableCell>
-                    <TableCell>{format(new Date(formula.date), 'PPP')}</TableCell>
+                    <TableCell>{format(new Date(formula.date), 'PPP', { locale: es })}</TableCell>
+                    <TableCell>
+                      {formula.expiration_date ? (
+                        <span className={new Date(formula.expiration_date) < new Date() ? 'text-red-600 font-semibold' : 'text-green-600'}>
+                          {format(new Date(formula.expiration_date), 'PPP', { locale: es })}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">Sin fecha</span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       {formula.medications[0].name}
                       {formula.medications.length > 1 &&
